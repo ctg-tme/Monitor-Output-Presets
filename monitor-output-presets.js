@@ -16,15 +16,35 @@ or implied.
  *                          Technical Marketing Engineering, Technical Leader
  *                          Cisco Systems
  * 
+ * Consulting Engineer(s):  Mike Nelson
+ *                          Solutions Engineer
+ *                          Cisco Systems
+ * 
  * Date: October 25, 2025
- * Last Updated: November 6, 2025
- * Version: 0.7.0
+ * Last Updated: November 12, 2025
+ * Version: 0.9.0
  * 
  * Description
  *     - Spawns an Interface that allows a user to create Monitor Presets (Display Output)
  *        - Offers changes of Monitor Role per Screen
  *        - Offers Matrix Routing of Video Input Connectors per Screen
  *        - Allows the user to save this preset into non-volatile memory to recover on the fly
+ * 
+ * MTR Compatible: No
+ *                 MTR does not support Monitor Roles in Full.
+ *                 MTR Does NOT support Video Matrix APIs.
+ * 
+ * - 0.9.0 Release Note
+ *  - Final Candidate
+ *  - What's Working
+ *   - All Known Features
+ * 
+ *  - What's Left
+ *   - RoomOS 11 Devices Testing
+ *   - Devices Pre-Peripheral ID Testing
+ *   - More precise and clear logging
+ *   - Harden Solution to Minimum RoomOS Version
+ *   - Block MTR use as it's incompatible
  * 
  * - 0.5.0 Release Notes
  *  - What's Working
@@ -50,32 +70,32 @@ or implied.
 
 import xapi from 'xapi';
 
-/** Developer Configuratoin options
+/** Developer Configurations options
  * 
  * Best not to alter unless doing active development against this solution
  * 
  */
 const developer = {
   ftsDefaults: {
-
+    PinProtection: {
+      Mode: 'Enabled',
+      Pin: '000000'
+    },
+    InitialOutputName: 'HDMI',
   },
   PinProtection: {
-    Mode: 'Enabled',
-    Pin: '000000',
     Regex: /^\d{4,8}$/
   },
-  InitialOutputName: 'HDMI',
   Preset: {
     DefaultTerminator: '✪',
     ShowIndex: false,
     OptionsTimeout: 3,
     NameRegex: /^[\x20-\x7E]{1,20}$/
-  },
-  ShowInputIcon: false
+  }
 }
 
 /**Version of the Macro */
-const version = '0.7.0';
+const version = '0.9.0';
 
 /**Name of the Macro. If running on older RoomOS software, this may error (OS9, OS10)*/
 const thisMacro = _main_macro_name();
@@ -101,23 +121,7 @@ const dev = {
   SubOptionsReleaseHandler: false // If true, will prevent the preset from executing on release when sub options menu pops up
 }
 
-let currentMatrixRoute = [
-  {
-    "Connector": 1,
-    "Layout": "Equal",
-    "InputOrder": []
-  },
-  {
-    "Connector": 2,
-    "Layout": "Equal",
-    "InputOrder": []
-  },
-  {
-    "Connector": 3,
-    "Layout": "Equal",
-    "InputOrder": []
-  }
-]
+let currentMatrixRoute = []
 
 Object.prototype.clone = Array.prototype.clone = function () {
   if (Object.prototype.toString.call(this) === '[object Array]') {
@@ -224,7 +228,8 @@ async function openDopmHidden({ Origin: Target, PeripheralId }) {
   await xapi.Command.UserInterface.Extensions.Panel.Open({ PanelId: 'dopm_hidden', PeripheralId });
   await xapi.Command.UserInterface.Extensions.Widget.Action({ WidgetId: 'dopm~Maker~OutputSelect', Type: 'released', Value: 1 })
   await updateMonitorRole({ UpdateFeedback: true });
-  await updateVideoMonitor({ UpdateFeedback: true })
+  await updateVideoMonitor({ UpdateFeedback: true });
+  await updatePinFeedback();
 }
 
 function getMatrixOrderByOutputId(connectorId) {
@@ -246,7 +251,7 @@ async function addSourceToMatrix(connectorId, valueToAdd) {
         console.error(err)
       }
     }
-    await xapi.Command.UserInterface.Extensions.Widget.SetValue({ WidgetId: 'dopm~Maker~Matrix:RouteOrder', Value: `Order: [${output.InputOrder.join(', ')}]` })
+    await xapi.Command.UserInterface.Extensions.Widget.SetValue({ WidgetId: 'dopm~Maker~Matrix:RouteOrder', Value: `Route Order: [${output.InputOrder.join(', ')}]` })
     return
   }
   console.warn(`Connector with ID ${connectorId} not found.`);
@@ -258,7 +263,7 @@ async function clearMatrix(connectorId) {
   if (output) {
     output.InputOrder = [];
     await xapi.Command.Video.Matrix.Reset({ Output: output.Connector })
-    await xapi.Command.UserInterface.Extensions.Widget.SetValue({ WidgetId: 'dopm~Maker~Matrix:RouteOrder', Value: `Order: [${output.InputOrder.join(', ')}]` })
+    await xapi.Command.UserInterface.Extensions.Widget.SetValue({ WidgetId: 'dopm~Maker~Matrix:RouteOrder', Value: `Route Order: [${output.InputOrder.join(', ')}]` })
     return;
   }
   console.warn(`Connector with ID ${connectorId} not found.`);
@@ -332,8 +337,45 @@ async function showNoPinRemovePrompt(options) {
   await xapi.Command.UserInterface.Message.Prompt.Display(msg);
 }
 
+async function showPinEdit(options) {
+  let msg = {
+    Title: 'Monitor Preset Pin Edit',
+    Text: 'Enter your current pin to confirm access',
+    Placeholder: '4-8 Digit Numeric Pin Accepted'
+  }
+
+  msg.Duration = 60;
+  msg.FeedbackId = options.FeedbackId;
+  msg.InputType = 'PIN';
+  msg.SubmitText = 'Next';
+
+  if (options.isError) {
+    msg.Title = `⚠️ ${msg.Title} ⚠️`
+    msg.Text = `⚠️ Invalid Pin, Try Again ⚠️<p>${msg.Text}`;
+    await xapi.Command.UserInterface.Message.TextInput.Display(msg);
+    return;
+  }
+
+  if (options.FeedbackId.includes('dopm_pinEdit_NewPin')) {
+    msg.Title = `Monitor Preset New Pin`
+    msg.Text = `Enter a NEW 4-8 Digit Numeric Pin for the Monitor Preset Maker`;
+    msg.SubmitText = 'Next';
+  }
+
+  if (options.FeedbackId.includes('dopm_pinEdit_ConfirmNewPin')) {
+    msg.Title = `Monitor Preset Confirm Pin`
+    msg.Text = `Conform your NEW 4-8 Digit Numeric Pin for the Monitor Preset Maker`;
+    msg.SubmitText = 'Save';
+  }
+
+  if (options.PeripheralId) {
+    msg.PeripheralId = options.PeripheralId
+  }
+
+  await xapi.Command.UserInterface.Message.TextInput.Display(msg);
+}
+
 function showMonitorRenamePrompt(options) {
-  console.warn(options,)
   let msg = {
     Title: 'Edit HDMI Output Name',
     Text: `Helps identify which display you're working with in Monitor Preset Maker (Weight < 8.0)`,
@@ -354,6 +396,7 @@ function showMonitorRenamePrompt(options) {
   xapi.Command.UserInterface.Message.TextInput.Display(msg);
 }
 
+let tempNewPin = '';
 
 const handle = {
   PanelClicked: async function ({ PanelId, Origin, PeripheralId }) {
@@ -405,8 +448,6 @@ const handle = {
         Origin,
         PeripheralId
       };
-
-      //console.warn('handlerParams', handlerParams)
 
       if (actionHandler && typeof actionHandler === 'object' && subAction) {
         const subActionHandler = actionHandler[subAction] || actionHandler['_default_'];
@@ -486,8 +527,6 @@ const handle = {
 
       DisplaySystemConfig.OutputNames[OutputConnector] = Text;
 
-      console.log(FeedbackId, OutputConnector)
-
       await saveDisplaySystemConfig();
 
       await buildUI.PresetMaker();
@@ -539,13 +578,52 @@ const handle = {
 
         await preset.save(Text);
         break;
+      case 'dopm_pinEdit_Validate':
+        const validateMakerPin = developer.PinProtection.Regex.test(Text);
+
+        if (!validateMakerPin) {
+          showPinEdit({ isError: true, PeripheralId });
+          return;
+        }
+
+        await showPinEdit({ FeedbackId: 'dopm_pinEdit_NewPin' })
+        break;
+      case 'dopm_pinEdit_NewPin':
+        const checkNewPin = developer.PinProtection.Regex.test(Text);
+
+        if (!checkNewPin) {
+          showPinEdit({ isError: true, PeripheralId });
+          return;
+        }
+
+        tempNewPin = Text;
+
+        await showPinEdit({ FeedbackId: 'dopm_pinEdit_ConfirmNewPin' })
+        break;
+      case 'dopm_pinEdit_ConfirmNewPin':
+        const confirmNewPin = (tempNewPin == Text);
+
+        if (!confirmNewPin) {
+          showPinEdit({ isError: true, PeripheralId });
+          return;
+        }
+
+        DisplaySystemConfig.PinProtection.Pin = Text;
+
+        await saveDisplaySystemConfig();
+
+        xapi.Command.UserInterface.Message.Prompt.Display({
+          Title: 'New Pin Saved!',
+          Text: '',
+          "Option.1": 'Dismiss'
+        })
+
+        break;
     }
   },
   PromptResponse: async function ({ FeedbackId, OptionId, Origin, PeripheralId }) {
     if (FeedbackId.includes(`dop_presetOptions~`)) {
       let [, index, isDefault] = FeedbackId.split('~');
-
-      console.error(index, isDefault)
 
       isDefault = isDefault.split(':')[1].toString() == 'true';
       index = parseInt(index.split(':')[1]);
@@ -569,20 +647,20 @@ const handle = {
 
     if (FeedbackId.includes(`dop_Prompt_ConfirmDelete`) && OptionId == 1) {
       const [, PresetIndex] = FeedbackId.split(':');
-
-      console.error(PresetIndex, FeedbackId, OptionId)
-
       await preset.remove(PresetIndex);
     }
   },
   StandbyState: async function (State) {
-    if (State == 'Off' && DisplaySystemConfig.Preset.Default) {
+    if (State == 'Off' && DisplaySystemConfig.Preset.Default !== null) {
       preset.activate(DisplaySystemConfig.Preset.Default);
       console.log(`System exited standby, setting default Monitor Preset. Index: [${DisplaySystemConfig.Preset.Default}] || Name: [${DisplaySystemConfig.Preset.List[DisplaySystemConfig.Preset.Default]}]`)
     }
   },
   CallDisconnect: async function (state) {
-    if (DisplaySystemConfig.Preset.Default) {
+    // Ensure the call that disconnected was the ONLY active call. If on a call, and declining another, this fires again
+    // Checking the activeCallCount prevents a false positve
+    const activeCallCount = await xapi.Status.SystemUnit.State.NumberOfActiveCalls.get()
+    if (DisplaySystemConfig.Preset.Default !== null && parseInt(activeCallCount) < 1) {
       preset.activate(DisplaySystemConfig.Preset.Default);
       console.log(`Call Disconnected, setting default Monitor Preset. Index: [${DisplaySystemConfig.Preset.Default}] || Name: [${DisplaySystemConfig.Preset.List[DisplaySystemConfig.Preset.Default]}]`)
     }
@@ -731,6 +809,7 @@ const preset = {
     DisplaySystemConfig.Preset.Current = index;
 
     await saveDisplaySystemConfig();
+    await buildUI.PresetList();
     console.log(`Monitor Preset index [${index}] Set || Name: ${thisPreset.Name}`);
   },
   remove: async function (index) {
@@ -757,9 +836,8 @@ const preset = {
 
     DisplaySystemConfig.Preset.Current = null;
 
-    await buildUI.PresetList();
-
     await saveDisplaySystemConfig();
+    await buildUI.PresetList();
   },
   rename: async function (index, newName) {
     if (!DisplaySystemConfig.Preset.List[index]) {
@@ -778,9 +856,8 @@ const preset = {
 
     console.info(`Monitor Preset at index [${index}] name changed from [${oldName}] to [${newName}]`)
 
-    await buildUI.PresetList();
-
     await saveDisplaySystemConfig();
+    await buildUI.PresetList();
   },
   setDefault: async function (index, removeDefault = false) {
     if (!DisplaySystemConfig.Preset.List[index]) {
@@ -806,9 +883,8 @@ const preset = {
       console.log(`Monitor Preset default has changed from [${oldDefault}] to [${index}]`)
     }
 
-    await buildUI.PresetList();
-
     await saveDisplaySystemConfig();
+    await buildUI.PresetList();
   }
 }
 
@@ -824,7 +900,7 @@ function setMakerInput(input) {
 
 function clearMakerInputSelection() {
   selectedMakerInput = null;
-  xapi.Command.UserInterface.Extensions.Widget.UnsetValue({ WidgetId: 'dopm~Maker~Matrix:SourceSelect' });
+  xapi.Command.UserInterface.Extensions.Widget.UnsetValue({ WidgetId: 'dopm~Maker~Matrix:SourceSelect' }).catch(e => console.debug(e));
   console.debug(`Maker Input deselected`);
 }
 
@@ -834,7 +910,7 @@ async function updateMatrixFeedback(connectorId) {
   if (currentOutputMatrix) {
     matrixOrder = `${currentOutputMatrix.InputOrder.join(', ')}`
   }
-  await xapi.Command.UserInterface.Extensions.Widget.SetValue({ WidgetId: 'dopm~Maker~Matrix:RouteOrder', Value: `Order: [${matrixOrder}]` })
+  await xapi.Command.UserInterface.Extensions.Widget.SetValue({ WidgetId: 'dopm~Maker~Matrix:RouteOrder', Value: `Route Order: [${matrixOrder}]` })
 }
 
 async function updateMonitorRole(options) {
@@ -912,6 +988,10 @@ async function updateVideoMonitor(options) {
   }
 }
 
+async function updatePinFeedback() {
+  await xapi.Command.UserInterface.Extensions.Widget.SetValue({ WidgetId: 'dopm~Config~PinProtection:Mode', Value: DisplaySystemConfig.PinProtection.Mode });
+}
+
 handle.ReleasedWidgets = {
   'Presets': {
     'Select': async ({ subAction, data, Value }) => {
@@ -950,7 +1030,7 @@ handle.ReleasedWidgets = {
           Title: 'Please Select a Source',
           Text: 'To Matrix Route to a display, you must select an input source first',
           Duration: 20,
-          "Option.1": 'Dimiss'
+          "Option.1": 'Dismiss'
         }
         if (PeripheralId) {
           contents.PeripheralId = PeripheralId;
@@ -1000,12 +1080,22 @@ handle.ReleasedWidgets = {
       'Help': function () {
         xapi.Command.UserInterface.Message.Prompt.Display({
           Title: 'Video Output Names',
-          Text: 'Name your Video Ouputs with a Character Weight 8.0 or less<p>Character Weights outlined below',
+          Text: 'Name your Video Outputs with a Character Weight 8.0 or less<p>Character Weights outlined below',
           "Option.1": '[Score 1.0] W, M, @',
           "Option.2": '[Score 0.75] A-Z, 0-9',
           "Option.3": `[Score 0.75] iltfj.,:;'\`!- (spaces)`,
-          "Option.4": 'Dimiss'
+          "Option.4": 'Dismiss'
         })
+      }
+    },
+    'PinProtection': {
+      'Mode': async function ({ Value }) {
+        DisplaySystemConfig.PinProtection.Mode = Value;
+
+        await saveDisplaySystemConfig();
+      },
+      'Edit': async function ({ data, PeripheralId }) {
+        showPinEdit({ FeedbackId: 'dopm_pinEdit_Validate', PeripheralId });
       }
     }
   }
@@ -1044,15 +1134,13 @@ handle.PressedWidgets = {
 
         if (isAlreadyDefault) { defaultAction = `Remove` }
 
-        console.log(isAlreadyDefault, defaultAction)
-
         xapi.Command.UserInterface.Message.Prompt.Display({
           Title: 'Monitor Preset Options',
           Text: `Choose an option below to modify<p>${thisPreset.Name} || Index: ${index}`,
           "Option.1": 'Rename Preset',
           "Option.2": `${defaultAction} Default Preset => ${developer.Preset.DefaultTerminator}`,
           "Option.3": '⚠️ Delete Preset ⚠️',
-          "Option.4": 'Dimiss',
+          "Option.4": 'Dismiss',
           FeedbackId: `dop_presetOptions~Index:${index}~isDefault:${isAlreadyDefault}`,
           PeripheralId
         })
@@ -1131,9 +1219,7 @@ let DisplaySystemConfig = {};
 async function setupPresetMemoryObject() {
   let tempInfo = {};
 
-  tempInfo['PinProtection'] = developer.PinProtection.clone();
-
-  delete tempInfo.PinProtection.Regex;
+  tempInfo['PinProtection'] = developer.ftsDefaults.PinProtection.clone();
 
   tempInfo['OutputNames'] = {};
 
@@ -1141,7 +1227,7 @@ async function setupPresetMemoryObject() {
 
   for (let i = 0; i < maxOuts; i++) {
     let connector = i + 1;
-    tempInfo.OutputNames[connector] = `${developer.InitialOutputName.clone()} ${connector}`;
+    tempInfo.OutputNames[connector] = `${developer.ftsDefaults.InitialOutputName.clone()} ${connector}`;
   };
 
   tempInfo['Preset'] = {}
@@ -1156,7 +1242,7 @@ async function setupPresetMemoryObject() {
 async function setCurrentPresetFeedback() {
   // if (DisplaySystemConfig.Preset.Current !== null && DisplaySystemConfig.Preset.Current !== undefined) {
   if (DisplaySystemConfig.Preset.Current === null || DisplaySystemConfig.Preset.Current === undefined) {
-    await xapi.Command.UserInterface.Extensions.Widget.UnsetValue({ WidgetId: 'dop~Presets~Select' });
+    await xapi.Command.UserInterface.Extensions.Widget.UnsetValue({ WidgetId: 'dop~Presets~Select' }).catch(e => console.debug(e));
     return;
   }
 
@@ -1164,7 +1250,7 @@ async function setCurrentPresetFeedback() {
   const thisIndex = DisplaySystemConfig.Preset.Current
 
   if (thisIndex && !thisPreset) {
-    await xapi.Command.UserInterface.Extensions.Widget.UnsetValue({ WidgetId: 'dop~Presets~Select' });
+    await xapi.Command.UserInterface.Extensions.Widget.UnsetValue({ WidgetId: 'dop~Presets~Select' }).catch(e => console.debug(e));
     return;
   }
 
@@ -1287,30 +1373,7 @@ const buildUI = {
     let videoInputSelectValueXML = ``;
 
     videoInputConnectors.forEach(input => {
-      let sourceIcon = '';
-      if (developer.ShowInputIcon) {
-        switch (input.InputSourceType) {
-          case 'PC':
-            sourceIcon = ' 💻'
-            break;
-          case 'camera':
-            sourceIcon = ' 📷'
-            break;
-          case 'document_camera':
-            sourceIcon = ' 📄'
-            break;
-          case 'mediaplayer':
-            sourceIcon = ' 📼'
-            break;
-          case 'whiteboard':
-            sourceIcon = ' 🔲'
-            break;
-          case 'other': default:
-            sourceIcon = ' 🟣'
-            break;
-        }
-      }
-      videoInputSelectValueXML += `<Value> <Key>${input.id}</Key> <Name>${input.Name}${sourceIcon}</Name> </Value>`
+      videoInputSelectValueXML += `<Value> <Key>${input.id}</Key> <Name>${input.Name} | ID:${input.id}</Name> </Value>`
     })
 
     let visibleXML = `<Extensions>
@@ -1343,12 +1406,12 @@ const buildUI = {
             <Row> <Name>Matrix Route</Name> <Widget> <WidgetId>dopm~Maker~Matrix:SourceSelect</WidgetId> <Type>GroupButton</Type> <Options>size=4;columns=2</Options> <ValueSpace> ${videoInputSelectValueXML} </ValueSpace> </Widget>
             <Widget>
               <WidgetId>dopm~Maker~Matrix:RouteOrder</WidgetId>
-              <Name>Order: []</Name>
+              <Name>Route Order: []</Name>
               <Type>Text</Type>
               <Options>size=2;fontSize=small;align=left</Options>
             </Widget>
            <Widget> <WidgetId>dopm~Maker~Matrix:Add</WidgetId> <Name>Add</Name> <Type>Button</Type> <Options>size=1</Options> </Widget> <Widget> <WidgetId>dopm~Maker~Matrix:Reset</WidgetId> <Name>Reset</Name> <Type>Button</Type> <Options>size=1</Options> </Widget> </Row>
-            <Row> <Name/> <Widget> <WidgetId>dopm~Maker~PresetSave</WidgetId> <Name>Save Preset</Name> <Type>Button</Type> <Options>size=2</Options> </Widget> </Row>
+            <Row> <Name>Save Preset</Name> <Widget> <WidgetId>dopm~Maker~PresetSave</WidgetId> <Name>Save Preset</Name> <Type>Button</Type> <Options>size=4</Options> </Widget> </Row>
             <Options/>
           </Page>
           <Page>
@@ -1360,7 +1423,7 @@ const buildUI = {
               <!-- <Widget> <WidgetId>dopm~Config~MonitorsConfig:Help</WidgetId> <Type>Button</Type> <Options>size=1;icon=help</Options> </Widget> -->
             </Row>
               ${videoOutputConfigNameXML}
-            <Row> <Name>Pin Protection</Name> <Widget> <WidgetId>dopm~Config~PinProtection:Mode</WidgetId> <Type>GroupButton</Type> <Options>size=4;columns=2</Options> <ValueSpace> <Value> <Key>disabled</Key> <Name>Disabled</Name> </Value> <Value> <Key>enabled</Key> <Name>Enabled</Name> </Value> </ValueSpace> </Widget> <Widget> <WidgetId>dopm~Config~PinProtection:Edit</WidgetId> <Name>Change Pin</Name> <Type>Button</Type> <Options>size=2</Options> </Widget> </Row>
+            <Row> <Name>Pin Protection</Name> <Widget> <WidgetId>dopm~Config~PinProtection:Mode</WidgetId> <Type>GroupButton</Type> <Options>size=4;columns=2</Options> <ValueSpace> <Value> <Key>Disabled</Key> <Name>Disabled</Name> </Value> <Value> <Key>Enabled</Key> <Name>Enabled</Name> </Value> </ValueSpace> </Widget> <Widget> <WidgetId>dopm~Config~PinProtection:Edit</WidgetId> <Name>Change Pin</Name> <Type>Button</Type> <Options>size=2</Options> </Widget> </Row>
             <Options/>
           </Page>
         </Panel>
@@ -1369,16 +1432,53 @@ const buildUI = {
 
     await xapi.Command.UserInterface.Extensions.Panel.Save({ PanelId: 'dopm_visible' }, visibleXML);
     await xapi.Command.UserInterface.Extensions.Panel.Save({ PanelId: 'dopm_hidden' }, hiddenXML);
-
   }
 }
 
 let availableMonitorsConfigs = videoMonitorsOrderTemplate.clone();
+
+/**Unused. Too large for Prompt API */
 let monitorsDescription = `A monitor role is assigned to each screen using the Video Output Connector [n] MonitorRole setting. The monitor role decides which layout (call participants and presentation) will appear on the screen that is connected to this output. Screens with the same monitor role will get the same layout; screens with different monitor roles will have different layouts.The monitor layout mode that is set in the Video Monitors setting should reflect the number of different layouts you want in your room setup. Note that some screens can be reserved for presentations.`;
+
 let availableMonitorRoleConfigs = monitorRoleOrderTemplate.clone();
+
+async function uptimeHandler(delayInMinutes = 3) {
+  const targetUptimeMs = delayInMinutes * 1000 * 60;
+  let currentUptime = (await xapi.Status.SystemUnit.Uptime.get() * 1000)
+
+  console.log(`Checking system uptime...`);
+  if (currentUptime < targetUptimeMs) {
+    console.log(`Waiting for system uptime to reach a minimum uptime of ${delayInMinutes} minutes...`)
+  }
+
+  while (currentUptime < targetUptimeMs) {
+    try {
+      currentUptime = (await xapi.Status.SystemUnit.Uptime.get() * 1000)
+    } catch (error) {
+      console.error("Error getting system uptime:", error);
+    }
+
+    if (currentUptime < targetUptimeMs) {
+      await delay(1000); // Wait 1 second before checking again
+    }
+  }
+  console.log(`System uptime of ${delayInMinutes} minutes reached!`);
+  return currentUptime
+}
 
 async function init() {
   console.info(`Initializing [${thisMacro}] || Version: [${version}]`);
+
+  const uptimeBootWindow = 2;
+  const uptimeDelay = 2;
+
+  const uptime = await uptimeHandler(uptimeDelay);
+
+  // Establish the number of displays for this device and setup currentMatrix object
+  const numDisplays = (await xapi.Config.Video.Output.Connector.get()).length;
+  for (let i = 0; i < numDisplays; i++) {
+    currentMatrixRoute.push({ "Connector": i + 1, "Layout": "Equal", "InputOrder": [] })
+  }
 
   // Initialize Memory
   await mem.init()
@@ -1422,10 +1522,34 @@ async function init() {
     }
   }
 
+  if (uptime <= ((uptimeDelay + uptimeBootWindow) * 60 * 1000)) {
+    console.debug(`Boot Detected, handling Monitor Preset startup`)
+    if (DisplaySystemConfig.Preset.Default !== null) {
+      await preset.activate(DisplaySystemConfig.Preset.Default);
+      console.log(`On Boot, applied Default Monitor Preset`)
+      return;
+    }
+
+    if (DisplaySystemConfig.Preset.Current !== null) {
+      await preset.activate(DisplaySystemConfig.Preset.Current);
+      console.log(`On Boot, applied Last Known Monitor Preset selected`)
+      return;
+    }
+  } else {
+    console.debug(`Macro Runtime Restart Detected, retrieving routes`)
+    if (DisplaySystemConfig.Preset.Current !== null) {
+      currentMatrixRoute = DisplaySystemConfig.Preset.List[DisplaySystemConfig.Preset.Current].Routes
+    }
+  }
+
   await buildUI.PresetList();
   await buildUI.PresetMaker();
 
   await StartSubscriptions();
+
+  await updateMonitorRole({ UpdateFeedback: true });
+  await updateVideoMonitor({ UpdateFeedback: true });
+  await updatePinFeedback()
 }
 
 init();
