@@ -104,7 +104,7 @@ const thisMacro = _main_macro_name();
 const storageMacroName = `${thisMacro}-Storage`;
 
 /** Defines the Pin Code Warning when using a Default Pin */
-const defaultPinWarning = `Your using the Macro Default Pin > ${developer.PinProtection.Pin}. Please change this pin to better protect this tool`;
+const defaultPinWarning = `Your using the Macro Default Pin > ${developer.ftsDefaults.PinProtection.Pin}. Please change this pin to better protect this tool`;
 
 /**This governs the order in which available Monitor Role configs per display will render */
 const monitorRoleOrderTemplate = ['Auto', 'First', 'Second', 'Third', 'PresentationOnly', 'Recorder'];
@@ -1335,7 +1335,7 @@ const buildUI = {
   PresetMaker: async function () {
     // Place Pin Warning on both pages if the current pin matches the default pin
     let makerPinWarningHeader = `<Row> <Name>Pin Warning</Name> <Widget> <WidgetId>dopm~Maker~Warnings</WidgetId> <Name>${defaultPinWarning}</Name> <Type>Text</Type> <Options>size=4;fontSize=normal;align=left</Options> </Widget> </Row>`;
-    if (DisplaySystemConfig.PinProtection.Pin != developer.PinProtection.Pin) { makerPinWarningHeader = ``; }
+    if (DisplaySystemConfig.PinProtection.Pin !== developer.ftsDefaults.PinProtection.Pin) { makerPinWarningHeader = ``; }
     let configPinWarningHeader = makerPinWarningHeader.clone();
 
     // Grab the available Video output Connectors and build the Group Button to Select them on the Maker Page
