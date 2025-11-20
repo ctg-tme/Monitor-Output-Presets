@@ -21,8 +21,8 @@ or implied.
  *                          Cisco Systems
  * 
  * Date: October 25, 2025
- * Last Updated: November 12, 2025
- * Version: 0.9.0
+ * Last Updated: November 20, 2025
+ * Version: 0.9.1
  * 
  * Description
  *     - Spawns an Interface that allows a user to create Monitor Presets (Display Output)
@@ -33,6 +33,9 @@ or implied.
  * MTR Compatible: No
  *                 MTR does not support Monitor Roles in Full.
  *                 MTR Does NOT support Video Matrix APIs.
+ * 
+ * - 0.9.1 Release Note
+ *  - Bug Fixes, New final candidate
  * 
  * - 0.9.0 Release Note
  *  - Final Candidate
@@ -95,7 +98,7 @@ const developer = {
 }
 
 /**Version of the Macro */
-const version = '0.9.0';
+const version = '0.9.1';
 
 /**Name of the Macro. If running on older RoomOS software, this may error (OS9, OS10)*/
 const thisMacro = _main_macro_name();
